@@ -5,6 +5,8 @@ gTTS
 SpeechRecognition
 Pillow
 pytesseract
-pydub
+opencv-python-headless
+numpy
 pymupdf
 python-docx
+pydub
