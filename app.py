@@ -8,114 +8,385 @@ import pytesseract
 import cv2
 import numpy as np
 from io import BytesIO
-import fitz  # PyMuPDF
+import fitz
+from docx import Document
+import tempfile
+import os
 
-# --- CONFIG & HELPERS ---
-st.set_page_config(page_title="PragyanAI Studio", layout="wide")
-langs_dict = GoogleTranslator().get_supported_languages(as_dict=True)
+# ----------------------------
+# CONFIG
+# ----------------------------
+st.set_page_config(
+    page_title="PragyanAI Studio",
+    layout="wide"
+)
 
-def translate_and_speak(text, target_code):
-    if not text or not text.strip():
-        st.warning("No text detected to translate.")
-        return
-    
-    try:
-        # Translation
-        translated = GoogleTranslator(source='auto', target=target_code).translate(text)
-        st.info(f"**Translated:** {translated}")
-        
-        # Audio Output
-        tts = gTTS(text=translated, lang=target_code)
-        tts_fp = BytesIO()
-        tts.write_to_fp(tts_fp)
-        st.audio(tts_fp)
-    except Exception as e:
-        st.error(f"Translation/TTS Error: {e}")
+langs_dict = GoogleTranslator().get_supported_languages(
+    as_dict=True
+)
 
+
+# ----------------------------
+# HELPERS
+# ----------------------------
+def translate_text(text, target_code):
+
+    if not text.strip():
+        return ""
+
+    translated = GoogleTranslator(
+        source="auto",
+        target=target_code
+    ).translate(text)
+
+    return translated
+
+
+def create_audio(text, lang):
+
+    tts = gTTS(
+        text=text,
+        lang=lang
+    )
+
+    audio_fp = BytesIO()
+
+    tts.write_to_fp(audio_fp)
+
+    audio_fp.seek(0)
+
+    return audio_fp
+
+
+# DOCX translation
+def translate_docx(uploaded_doc, target_code):
+
+    original_doc = Document(uploaded_doc)
+
+    translated_doc = Document()
+
+    # Paragraphs
+    for para in original_doc.paragraphs:
+
+        translated_text = translate_text(
+            para.text,
+            target_code
+        )
+
+        translated_doc.add_paragraph(
+            translated_text
+        )
+
+    # Tables
+    for table in original_doc.tables:
+
+        new_table = translated_doc.add_table(
+            rows=len(table.rows),
+            cols=len(table.columns)
+        )
+
+        for i, row in enumerate(table.rows):
+
+            for j, cell in enumerate(row.cells):
+
+                translated_cell = translate_text(
+                    cell.text,
+                    target_code
+                )
+
+                new_table.cell(i, j).text = translated_cell
+
+    output = BytesIO()
+
+    translated_doc.save(output)
+
+    output.seek(0)
+
+    return output
+
+
+# PDF extraction
 def extract_text_from_pdf(pdf_bytes):
+
     text = ""
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+
+    with fitz.open(
+        stream=pdf_bytes,
+        filetype="pdf"
+    ) as doc:
+
         for page in doc:
             text += page.get_text()
+
     return text
 
-# --- MAIN APP ---
+
+# ----------------------------
+# MAIN
+# ----------------------------
 def main():
-    st.title("🌐 PragyanAI Multi-Model Studio")
-    
-    # Sidebar Configuration
-    st.sidebar.header("Settings")
-    target_lang = st.sidebar.selectbox("Select Target Language", list(langs_dict.keys()))
+
+    st.title(
+        "🌐 PragyanAI Multi-Modal Studio"
+    )
+
+    target_lang = st.sidebar.selectbox(
+        "Target Language",
+        list(langs_dict.keys())
+    )
+
     target_code = langs_dict[target_lang]
 
-    # Enhanced Tabs
-    tabs = st.tabs(["🎥 Live Vision", "📸 Image/PDF", "🎤 Voice Hub", "📝 Text"])
+    tabs = st.tabs([
+        "📄 DOCX",
+        "📸 Image/PDF",
+        "🎤 Audio",
+        "📝 Text"
+    ])
 
-    # --- TAB 1: LIVE VISION ---
+
+    # ---------------- DOCX
     with tabs[0]:
-        st.subheader("Live Camera Translator")
-        img_file_buffer = st.camera_input("Take a snapshot of text")
-        if img_file_buffer:
-            bytes_data = img_file_buffer.getvalue()
-            cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-            if st.button("Extract from Snapshot"):
-                extracted = pytesseract.image_to_string(cv2_img)
-                st.success(f"**Detected:** {extracted}")
-                translate_and_speak(extracted, target_code)
 
-    # --- TAB 2: DOCUMENT & IMAGE UPLOAD (PDF Support) ---
+        doc_file = st.file_uploader(
+            "Upload DOCX",
+            type=["docx"]
+        )
+
+        if doc_file:
+
+            if st.button(
+                "Translate DOCX"
+            ):
+
+                translated_doc = translate_docx(
+                    doc_file,
+                    target_code
+                )
+
+                st.success(
+                    "DOCX translated"
+                )
+
+                st.download_button(
+                    "Download DOCX",
+                    translated_doc,
+                    file_name="translated.docx"
+                )
+
+
+    # ---------------- IMAGE/PDF
     with tabs[1]:
-        st.subheader("Image & PDF Translator")
-        uploaded_doc = st.file_uploader("Upload Image or PDF", type=['png', 'jpg', 'jpeg', 'pdf'])
-        
-        if uploaded_doc:
-            if uploaded_doc.type == "application/pdf":
-                if st.button("Extract from PDF"):
-                    pdf_text = extract_text_from_pdf(uploaded_doc.read())
-                    st.text_area("Extracted PDF Content", pdf_text, height=200)
-                    translate_and_speak(pdf_text, target_code)
+
+        uploaded_file = st.file_uploader(
+            "Upload Image or PDF",
+            type=[
+                "png",
+                "jpg",
+                "jpeg",
+                "pdf"
+            ]
+        )
+
+        if uploaded_file:
+
+            if uploaded_file.type == "application/pdf":
+
+                if st.button(
+                    "Translate PDF"
+                ):
+
+                    extracted = extract_text_from_pdf(
+                        uploaded_file.read()
+                    )
+
+                    translated = translate_text(
+                        extracted,
+                        target_code
+                    )
+
+                    doc = Document()
+
+                    doc.add_paragraph(
+                        translated
+                    )
+
+                    output = BytesIO()
+
+                    doc.save(output)
+
+                    output.seek(0)
+
+                    st.download_button(
+                        "Download DOCX",
+                        output,
+                        file_name="translated_pdf.docx"
+                    )
+
             else:
-                img = Image.open(uploaded_doc)
-                st.image(img, width=300)
-                if st.button("Extract from Image"):
-                    extracted = pytesseract.image_to_string(img)
-                    st.success(f"**Detected:** {extracted}")
-                    translate_and_speak(extracted, target_code)
 
-    # --- TAB 3: VOICE HUB (Live & File) ---
+                img = Image.open(
+                    uploaded_file
+                )
+
+                st.image(
+                    img,
+                    width=300
+                )
+
+                if st.button(
+                    "Translate Image"
+                ):
+
+                    extracted = pytesseract.image_to_string(
+                        img
+                    )
+
+                    translated = translate_text(
+                        extracted,
+                        target_code
+                    )
+
+                    # Create docx
+                    doc = Document()
+
+                    # image stays in doc
+                    uploaded_file.seek(0)
+                    doc.add_picture(
+                        uploaded_file
+                    )
+
+                    doc.add_paragraph(
+                        translated
+                    )
+
+                    output = BytesIO()
+
+                    doc.save(output)
+
+                    output.seek(0)
+
+                    st.download_button(
+                        "Download DOCX",
+                        output,
+                        file_name="translated_image.docx"
+                    )
+
+
+    # ---------------- AUDIO
     with tabs[2]:
-        st.subheader("Audio Translator")
-        choice = st.radio("Choose Input", ["Live Record", "Upload Audio File"])
-        
-        audio_to_process = None
-        
-        if choice == "Live Record":
-            audio_to_process = audio_recorder(text="Click to record")
+
+        choice = st.radio(
+            "Input type",
+            [
+                "Record",
+                "Upload"
+            ]
+        )
+
+        audio_bytes = None
+
+        if choice == "Record":
+
+            audio_bytes = audio_recorder(
+                text="Record"
+            )
+
         else:
-            audio_to_process = st.file_uploader("Upload Audio (WAV/FLAC)", type=['wav', 'flac'])
 
-        if audio_to_process:
-            # Handle both bytes (recorder) and UploadedFile object
-            audio_data_bytes = audio_to_process if isinstance(audio_to_process, bytes) else audio_to_process.read()
-            st.audio(audio_data_bytes)
-            
-            if st.button("Process Audio"):
-                with st.spinner("Converting speech to text..."):
-                    try:
-                        recognizer = sr.Recognizer()
-                        with sr.AudioFile(BytesIO(audio_data_bytes)) as source:
-                            recorded_audio = recognizer.record(source)
-                            text = recognizer.recognize_google(recorded_audio)
-                            st.success(f"**Transcription:** {text}")
-                            translate_and_speak(text, target_code)
-                    except Exception as e:
-                        st.error("Audio format not supported or clear. Try WAV files.")
+            uploaded_audio = st.file_uploader(
+                "Upload audio",
+                type=[
+                    "wav",
+                    "flac"
+                ]
+            )
 
-    # --- TAB 4: MANUAL TEXT ---
+            if uploaded_audio:
+                audio_bytes = uploaded_audio.read()
+
+        if audio_bytes:
+
+            st.audio(
+                audio_bytes
+            )
+
+            if st.button(
+                "Translate Audio"
+            ):
+
+                recognizer = sr.Recognizer()
+
+                with sr.AudioFile(
+                    BytesIO(audio_bytes)
+                ) as source:
+
+                    audio_data = recognizer.record(
+                        source
+                    )
+
+                text = recognizer.recognize_google(
+                    audio_data
+                )
+
+                translated = translate_text(
+                    text,
+                    target_code
+                )
+
+                st.success(
+                    translated
+                )
+
+                audio_output = create_audio(
+                    translated,
+                    target_code
+                )
+
+                st.audio(
+                    audio_output
+                )
+
+
+    # ---------------- TEXT
     with tabs[3]:
-        user_text = st.text_area("Type text to translate...", height=150)
-        if st.button("Translate Text"):
-            translate_and_speak(user_text, target_code)
+
+        text = st.text_area(
+            "Type text"
+        )
+
+        if st.button(
+            "Translate Text"
+        ):
+
+            translated = translate_text(
+                text,
+                target_code
+            )
+
+            st.success(
+                translated
+            )
+
+            # Save as DOCX
+            doc = Document()
+
+            doc.add_paragraph(
+                translated
+            )
+
+            output = BytesIO()
+
+            doc.save(output)
+
+            output.seek(0)
+
+            st.download_button(
+                "Download DOCX",
+                output,
+                file_name="translated_text.docx"
+            )
+
 
 if __name__ == "__main__":
     main()
