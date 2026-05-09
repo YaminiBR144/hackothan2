@@ -3,7 +3,6 @@ audio-recorder-streamlit
 deep-translator
 gTTS
 SpeechRecognition
-PyAudio
 Pillow
 pytesseract
 opencv-python-headless
