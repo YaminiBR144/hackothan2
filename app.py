@@ -8,22 +8,27 @@ import pytesseract
 import cv2
 import numpy as np
 from io import BytesIO
-import fitz  # PyMuPDF for PDF handling
-from docx import Document # python-docx for Word files
-from pydub import AudioSegment # for MP3 to WAV conversion
+import pdfplumber
+from fpdf import FPDF
+from pydub import AudioSegment
 
 # --- CONFIG & HELPERS ---
 st.set_page_config(page_title="PragyanAI Studio Pro", layout="wide")
 langs_dict = GoogleTranslator().get_supported_languages(as_dict=True)
 
-def translate_and_get_tts(text, target_code):
-    if not text.strip():
-        return None, None
-    translated = GoogleTranslator(source='auto', target=target_code).translate(text)
-    tts = gTTS(text=translated, lang=target_code)
-    tts_fp = BytesIO()
-    tts.write_to_fp(tts_fp)
-    return translated, tts_fp
+def translate_text(text, target_code):
+    if not text or not text.strip():
+        return None
+    return GoogleTranslator(source='auto', target=target_code).translate(text)
+
+def create_pdf(text):
+    pdf = FPDF()
+    pdf.add_page()
+    # Using Arial as a standard font; note: for non-Latin scripts, 
+    # you'd need to link a Unicode-compatible .ttf font.
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, txt=text)
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- MAIN APP ---
 def main():
@@ -32,92 +37,101 @@ def main():
     target_lang = st.sidebar.selectbox("Select Target Language", list(langs_dict.keys()))
     target_code = langs_dict[target_lang]
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🎥 Live Vision", "📸 Image/PDF", "🎤 Voice/MP3", "📝 Text/Docx"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🎥 Live Vision", "📂 Documents/Images", "🎤 Voice/Audio", "📝 Text"])
 
-    # --- TAB 1: LIVE VISION (Unchanged) ---
+    # --- TAB 1: LIVE VISION ---
     with tab1:
-        img_file_buffer = st.camera_input("Take a photo to translate")
+        st.subheader("Live Camera Translator")
+        img_file_buffer = st.camera_input("Take a photo of text")
         if img_file_buffer:
-            cv2_img = cv2.imdecode(np.frombuffer(img_file_buffer.getvalue(), np.uint8), cv2.IMREAD_COLOR)
+            bytes_data = img_file_buffer.getvalue()
+            cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
             if st.button("Extract & Translate Camera"):
-                text = pytesseract.image_to_string(cv2_img)
-                trans, audio = translate_and_get_tts(text, target_code)
-                st.success(f"**Detected:** {text}\n\n**Translated:** {trans}")
-                st.audio(audio)
+                extracted = pytesseract.image_to_string(cv2_img)
+                translated = translate_text(extracted, target_code)
+                if translated:
+                    st.success(f"**Translated:** {translated}")
 
-    # --- TAB 2: IMAGE & PDF UPLOAD ---
+    # --- TAB 2: DOCUMENT & IMAGE UPLOAD ---
     with tab2:
-        up_file = st.file_uploader("Upload Image or PDF", type=['png', 'jpg', 'jpeg', 'pdf'])
-        if up_file:
-            if up_file.type == "application/pdf":
-                doc = fitz.open(stream=up_file.read(), filetype="pdf")
-                full_text = "".join([page.get_text() for page in doc])
-                st.text_area("Extracted PDF Text", full_text, height=200)
-                if st.button("Translate PDF"):
-                    trans, audio = translate_and_get_tts(full_text, target_code)
-                    st.info(f"**Translated:** {trans}")
-                    st.download_button("Download Translation (TXT)", trans, file_name="translated_pdf.txt")
+        st.subheader("Upload Image or PDF")
+        uploaded_file = st.file_uploader("Choose a file", type=['png', 'jpg', 'jpeg', 'pdf'])
+        
+        if uploaded_file:
+            extracted_text = ""
+            if uploaded_file.type == "application/pdf":
+                with pdfplumber.open(uploaded_file) as pdf:
+                    extracted_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
             else:
-                img = Image.open(up_file)
+                img = Image.open(uploaded_file)
                 st.image(img, width=300)
-                if st.button("Process Image"):
-                    text = pytesseract.image_to_string(img)
-                    trans, _ = translate_and_get_tts(text, target_code)
-                    st.success(f"**Translated:** {trans}")
-                    st.download_button("Download Translation", trans, file_name="translated_img.txt")
+                extracted_text = pytesseract.image_to_string(img)
 
-    # --- TAB 3: VOICE & MP3 ---
+            if st.button("Process Document"):
+                translated_text = translate_text(extracted_text, target_code)
+                if translated_text:
+                    st.info(f"**Translation:**\n{translated_text}")
+                    
+                    # PDF Download Logic
+                    pdf_bytes = create_pdf(translated_text)
+                    st.download_button(
+                        label="📥 Download Translated PDF",
+                        data=pdf_bytes,
+                        file_name="translated_document.pdf",
+                        mime="application/pdf"
+                    )
+
+    # --- TAB 3: VOICE & AUDIO FILE ---
     with tab3:
-        st.subheader("Record or Upload Audio")
-        audio_rec = audio_recorder(text="Click to record")
-        audio_up = st.file_uploader("Or Upload MP3", type=['mp3', 'wav'])
+        st.subheader("Audio Translation")
+        col1, col2 = st.columns(2)
         
-        final_audio = audio_rec if audio_rec else (audio_up.read() if audio_up else None)
+        with col1:
+            st.write("Record Live:")
+            recorded_audio = audio_recorder()
         
-        if final_audio:
-            # Convert MP3 to WAV for SpeechRecognition if needed
-            audio_bio = BytesIO(final_audio)
-            if audio_up and audio_up.type == "audio/mpeg":
-                sound = AudioSegment.from_file(audio_bio, format="mp3")
-                audio_bio = BytesIO()
-                sound.export(audio_bio, format="wav")
-            
+        with col2:
+            st.write("Or Upload File:")
+            uploaded_audio = st.file_uploader("Upload Audio", type=['wav', 'mp3', 'm4a'])
+
+        final_audio_bytes = recorded_audio if recorded_audio else (uploaded_audio.read() if uploaded_audio else None)
+
+        if final_audio_bytes:
             if st.button("Transcribe & Translate Audio"):
-                r = sr.Recognizer()
-                with sr.AudioFile(audio_bio) as source:
-                    audio_data = r.record(source)
-                    text = r.recognize_google(audio_data)
-                    trans, tts_audio = translate_and_get_tts(text, target_code)
-                    st.success(f"**Original:** {text}\n\n**Translated:** {trans}")
-                    st.audio(tts_audio)
-                    st.download_button("Download Transcript", trans, file_name="audio_trans.txt")
+                recognizer = sr.Recognizer()
+                # Convert to WAV for speech_recognition compatibility
+                audio_seg = AudioSegment.from_file(BytesIO(final_audio_bytes))
+                wav_io = BytesIO()
+                audio_seg.export(wav_io, format="wav")
+                wav_io.seek(0)
 
-    # --- TAB 4: MANUAL TEXT & DOCX (With Image Preservation) ---
+                with sr.AudioFile(wav_io) as source:
+                    audio_data = recognizer.record(source)
+                    try:
+                        raw_text = recognizer.recognize_google(audio_data)
+                        translated = translate_text(raw_text, target_code)
+                        st.success(f"**Original:** {raw_text}")
+                        st.success(f"**Translated:** {translated}")
+
+                        # TTS and Download
+                        tts = gTTS(text=translated, lang=target_code)
+                        tts_io = BytesIO()
+                        tts.write_to_fp(tts_io)
+                        st.audio(tts_io)
+                        st.download_button("📥 Download Translated Audio", tts_io.getvalue(), "translated_voice.mp3", "audio/mp3")
+                    except Exception as e:
+                        st.error(f"Speech Error: {e}")
+
+    # --- TAB 4: MANUAL TEXT ---
     with tab4:
-        st.subheader("Text or Word Document")
-        user_text = st.text_area("Manual Input")
-        docx_file = st.file_uploader("Upload Docx", type=['docx'])
-
-        if docx_file:
-            doc = Document(docx_file)
-            if st.button("Translate Docx"):
-                # Logic: Iterate paragraphs, translate text, keep images
-                for para in doc.paragraphs:
-                    if para.text.strip():
-                        para.text = GoogleTranslator(source='auto', target=target_code).translate(para.text)
-                
-                # Save modified doc to buffer
-                out_bio = BytesIO()
-                doc.save(out_bio)
-                st.success("Docx Translated! (Images preserved)")
-                st.download_button("Download Translated Docx", out_bio.getvalue(), 
-                                   file_name="translated.docx", 
-                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-
-        if st.button("Translate Manual Text") and user_text:
-            trans, _ = translate_and_get_tts(user_text, target_code)
-            st.info(trans)
-            st.download_button("Download Text", trans, file_name="manual_trans.txt")
+        st.subheader("Manual Text Input")
+        user_text = st.text_area("Paste text or scripts here...")
+        if st.button("Translate & Download"):
+            translated = translate_text(user_text, target_code)
+            if translated:
+                st.write(translated)
+                pdf_bytes = create_pdf(translated)
+                st.download_button("📥 Download PDF", pdf_bytes, "text_translation.pdf", "application/pdf")
 
 if __name__ == "__main__":
     main()
