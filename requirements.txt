@@ -10,3 +10,5 @@ numpy
 pymupdf
 python-docx
 pydub
+pdfplumber
+fpdf
