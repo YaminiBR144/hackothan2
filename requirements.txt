@@ -1,0 +1,12 @@
+streamlit
+audio-recorder-streamlit
+deep-translator
+gtts
+SpeechRecognition
+PyAudio
+Pillow
+pytesseract
+opencv-python-headless
+numpy
+python-docx
+lxml
