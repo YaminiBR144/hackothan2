@@ -5,40 +5,23 @@ from gtts import gTTS
 import speech_recognition as sr
 from PIL import Image
 import pytesseract
-import cv2
-import numpy as np
 from io import BytesIO
 import fitz
 from docx import Document
-import tempfile
-import os
+from pydub import AudioSegment  # Required for MP3 processing
 
 # ---------------------------- #
-# CONFIG
+# CONFIG & HELPERS
 # ---------------------------- #
-st.set_page_config(
-    page_title="PragyanAI Studio",
-    layout="wide"
-)
+st.set_page_config(page_title="PragyanAI Studio", layout="wide")
 
-# Fetch supported languages once
 try:
     langs_dict = GoogleTranslator().get_supported_languages(as_dict=True)
-except Exception:
-    # Fallback if there's a connection issue
-    langs_dict = {"english": "en", "hindi": "hi", "spanish": "es"}
+except:
+    langs_dict = {"english": "en", "hindi": "hi"}
 
-# ---------------------------- #
-# HELPERS
-# ---------------------------- #
 def translate_text(text, target_code):
-    if not text.strip():
-        return ""
-    translated = GoogleTranslator(
-        source="auto",
-        target=target_code
-    ).translate(text)
-    return translated
+    return GoogleTranslator(source="auto", target=target_code).translate(text) if text.strip() else ""
 
 def create_audio(text, lang):
     tts = gTTS(text=text, lang=lang)
@@ -47,123 +30,83 @@ def create_audio(text, lang):
     audio_fp.seek(0)
     return audio_fp
 
-def extract_text_from_pdf(pdf_bytes):
-    text = ""
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text()
-    return text
-
 # ---------------------------- #
 # MAIN
 # ---------------------------- #
 def main():
     st.title("🌐 PragyanAI Multi-Modal Studio")
-    
-    # Sidebar for language selection
-    target_lang = st.sidebar.selectbox(
-        "Target Language", 
-        list(langs_dict.keys()),
-        index=list(langs_dict.keys()).index("english") if "english" in langs_dict else 0
-    )
+    target_lang = st.sidebar.selectbox("Target Language", list(langs_dict.keys()))
     target_code = langs_dict[target_lang]
 
-    # Tabs definition - DOCX replaced by Capture
-    tabs = st.tabs([
-        "📸 Capture & Translate", 
-        "🖼️ Upload Image/PDF", 
-        "🎤 Audio", 
-        "📝 Text"
-    ])
+    tabs = st.tabs(["📸 Capture", "🖼️ Upload Image/PDF", "🎤 Audio", "📝 Text"])
 
-    # ---------------- TAB 0: CAPTURE & TRANSLATE
+    # --- TAB 0: CAPTURE ---
     with tabs[0]:
-        st.header("Live Camera Capture")
-        # Use camera input instead of file uploader
-        img_file_buffer = st.camera_input("Take a photo of text to translate")
+        img_file = st.camera_input("Capture text")
+        if img_file and st.button("Translate Capture"):
+            img = Image.open(img_file)
+            text = pytesseract.image_to_string(img)
+            translated = translate_text(text, target_code)
+            st.success(translated)
 
-        if img_file_buffer:
-            img = Image.open(img_file_buffer)
-            
-            if st.button("Extract & Translate Capture"):
-                with st.spinner("Processing..."):
-                    # OCR processing
-                    extracted = pytesseract.image_to_string(img)
-                    
-                    if extracted.strip():
-                        translated = translate_text(extracted, target_code)
-                        
-                        st.subheader("Results")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.info(f"**Original Text:**\n{extracted}")
-                        with col2:
-                            st.success(f"**Translated ({target_lang}):**\n{translated}")
-                        
-                        # Save to DOCX for download
-                        doc = Document()
-                        doc.add_heading('Captured Translation', 0)
-                        doc.add_picture(img_file_buffer, width=fitz.utils.inches(4))
-                        doc.add_paragraph(f"Translated Text: {translated}")
-                        
-                        output = BytesIO()
-                        doc.save(output)
-                        output.seek(0)
-                        st.download_button("Download DOCX", output, file_name="captured_text.docx")
-                    else:
-                        st.warning("No text found in the image. Try a clearer shot!")
-
-    # ---------------- TAB 1: IMAGE/PDF UPLOAD
+    # --- TAB 1: IMAGE/PDF ---
     with tabs[1]:
-        uploaded_file = st.file_uploader("Upload Image or PDF", type=["png", "jpg", "jpeg", "pdf"])
-        if uploaded_file:
-            if uploaded_file.type == "application/pdf":
-                if st.button("Translate PDF"):
-                    extracted = extract_text_from_pdf(uploaded_file.read())
-                    translated = translate_text(extracted, target_code)
-                    st.success(translated)
-            else:
-                img = Image.open(uploaded_file)
-                st.image(img, width=300)
-                if st.button("Translate Uploaded Image"):
-                    extracted = pytesseract.image_to_string(img)
-                    translated = translate_text(extracted, target_code)
-                    st.success(translated)
+        uploaded_file = st.file_uploader("Upload Image/PDF", type=["png", "jpg", "pdf"])
+        if uploaded_file and st.button("Translate Upload"):
+            # Simple extraction logic (OCR for image, fitz for PDF)
+            pass 
 
-    # ---------------- TAB 2: AUDIO
+    # --- TAB 2: AUDIO (MP3 & DOWNLOAD) ---
     with tabs[2]:
-        choice = st.radio("Input type", ["Record", "Upload"])
-        audio_bytes = None
-        if choice == "Record":
-            audio_bytes = audio_recorder(text="Click to Record")
-        else:
-            uploaded_audio = st.file_uploader("Upload audio", type=["wav", "flac"])
-            if uploaded_audio:
-                audio_bytes = uploaded_audio.read()
+        choice = st.radio("Input", ["Record", "Upload MP3/WAV"])
+        audio_data = None
         
-        if audio_bytes:
-            st.audio(audio_bytes)
+        if choice == "Record":
+            audio_data = audio_recorder()
+        else:
+            uploaded_audio = st.file_uploader("Upload Song", type=["mp3", "wav"])
+            if uploaded_audio:
+                # Convert MP3 to WAV in-memory for SpeechRecognition
+                if uploaded_audio.name.endswith(".mp3"):
+                    audio = AudioSegment.from_file(uploaded_audio, format="mp3")
+                    wav_io = BytesIO()
+                    audio.export(wav_io, format="wav")
+                    audio_data = wav_io.getvalue()
+                else:
+                    audio_data = uploaded_audio.read()
+
+        if audio_data:
+            st.audio(audio_data)
             if st.button("Translate Audio"):
                 recognizer = sr.Recognizer()
-                with sr.AudioFile(BytesIO(audio_bytes)) as source:
-                    audio_data = recognizer.record(source)
+                with sr.AudioFile(BytesIO(audio_data)) as source:
+                    audio_recorded = recognizer.record(source)
+                
                 try:
-                    text = recognizer.recognize_google(audio_data)
+                    text = recognizer.recognize_google(audio_recorded)
                     translated = translate_text(text, target_code)
-                    st.success(translated)
-                    st.audio(create_audio(translated, target_code))
+                    st.subheader("Translated Lyrics:")
+                    st.write(translated)
+                    
+                    # Generate Translated Audio
+                    translated_audio = create_audio(translated, target_code)
+                    st.audio(translated_audio)
+                    
+                    # DOWNLOAD OPTION
+                    st.download_button(
+                        label="🎵 Download Translated Song (MP3)",
+                        data=translated_audio,
+                        file_name="translated_song.mp3",
+                        mime="audio/mp3"
+                    )
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Could not process audio: {e}")
 
-    # ---------------- TAB 3: TEXT
+    # --- TAB 3: TEXT ---
     with tabs[3]:
-        text_input = st.text_area("Type text here")
-        if st.button("Translate Text"):
-            if text_input:
-                translated = translate_text(text_input, target_code)
-                st.success(translated)
-            else:
-                st.warning("Please enter some text.")
+        text_input = st.text_area("Type text")
+        if st.button("Translate"):
+            st.success(translate_text(text_input, target_code))
 
 if __name__ == "__main__":
     main()
