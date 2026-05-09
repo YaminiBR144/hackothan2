@@ -10,3 +10,4 @@ numpy
 PyMuPDF
 python-docx
 lxml
+pydub
