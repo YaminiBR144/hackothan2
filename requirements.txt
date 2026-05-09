@@ -8,3 +8,5 @@ pytesseract
 opencv-python-headless
 numpy
 PyMuPDF
+python-docx
+lxml
