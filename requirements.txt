@@ -1,7 +1,7 @@
 streamlit
 audio-recorder-streamlit
 deep-translator
-gtts
+gTTS
 SpeechRecognition
 PyAudio
 Pillow
