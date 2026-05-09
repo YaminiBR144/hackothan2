@@ -7,5 +7,4 @@ Pillow
 pytesseract
 opencv-python-headless
 numpy
-python-docx
-lxml
+PyMuPDF
